@@ -24,6 +24,8 @@ bool Copter::all_arming_checks_passing(bool arming_from_gcs)
 {
     if (pre_arm_checks(true)) {
         set_pre_arm_check(true);
+    } else {
+        return false;
     }
 
     return ap.pre_arm_check && arm_checks(true, arming_from_gcs);
@@ -51,8 +53,7 @@ bool Copter::pre_arm_checks(bool display_failure)
     // if it is, switch needs to be in disabled position to arm
     // otherwise exit immediately.  This check to be repeated,
     // as state can change at any time.
-    // skip check in Throw mode which takes control of the motor interlock
-    if (ap.using_interlock && motors.get_interlock()) {
+    if (ap.using_interlock && ap.motor_interlock_switch) {
         if (display_failure) {
             gcs_send_text(MAV_SEVERITY_CRITICAL,"PreArm: Motor Interlock Enabled");
         }
@@ -718,7 +719,7 @@ bool Copter::arm_checks(bool display_failure, bool arming_from_gcs)
         // check throttle is not too high - skips checks if arming from GCS in Guided
         if (!(arming_from_gcs && (control_mode == GUIDED || control_mode == GUIDED_NOGPS))) {
             // above top of deadband is too always high
-            if (channel_throttle->get_control_in() > get_takeoff_trigger_throttle()) {
+            if (get_pilot_desired_climb_rate(channel_throttle->get_control_in()) > 0.0f) {
                 if (display_failure) {
                     #if FRAME_CONFIG == HELI_FRAME
                     gcs_send_text(MAV_SEVERITY_CRITICAL,"Arm: Collective too high");

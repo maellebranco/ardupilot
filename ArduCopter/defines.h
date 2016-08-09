@@ -225,7 +225,6 @@ enum RTLState {
 // Alt_Hold states
 enum AltHoldModeState {
     AltHold_MotorStopped,
-    AltHold_NotAutoArmed,
     AltHold_Takeoff,
     AltHold_Flying,
     AltHold_Landed
@@ -234,10 +233,17 @@ enum AltHoldModeState {
 // Loiter states
 enum LoiterModeState {
     Loiter_MotorStopped,
-    Loiter_NotAutoArmed,
     Loiter_Takeoff,
     Loiter_Flying,
     Loiter_Landed
+};
+
+// Sport states
+enum SportModeState {
+    Sport_MotorStopped,
+    Sport_Takeoff,
+    Sport_Flying,
+    Sport_Landed
 };
 
 // Flip states
@@ -265,9 +271,10 @@ enum ThrowModeType {
     ThrowType_Drop = 1
 };
 
-// LAND state
-#define LAND_STATE_FLY_TO_LOCATION  0
-#define LAND_STATE_DESCENDING       1
+enum LandStateType {
+    LandStateType_FlyToLocation = 0,
+    LandStateType_Descending = 1
+};
 
 //  Logging parameters
 #define TYPE_AIRSTART_MSG               0x00

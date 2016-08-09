@@ -13,7 +13,7 @@ const AP_Param::GroupInfo AC_PrecLand::var_info[] = {
     // @Description: Precision Land enabled/disabled and behaviour
     // @Values: 0:Disabled, 1:Enabled Always Land, 2:Enabled Strict
     // @User: Advanced
-    AP_GROUPINFO("ENABLED", 0, AC_PrecLand, _enabled, 0),
+    AP_GROUPINFO_FLAGS("ENABLED", 0, AC_PrecLand, _enabled, 0, AP_PARAM_FLAG_ENABLE),
 
     // @Param: TYPE
     // @DisplayName: Precision Land Type
@@ -33,6 +33,7 @@ AC_PrecLand::AC_PrecLand(const AP_AHRS& ahrs, const AP_InertialNav& inav) :
     _ahrs(ahrs),
     _inav(inav),
     _last_update_ms(0),
+    _last_backend_los_meas_ms(0),
     _backend(NULL)
 {
     // set parameters to defaults

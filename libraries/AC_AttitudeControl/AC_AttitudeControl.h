@@ -104,8 +104,11 @@ public:
     // Ensure attitude controller have zero errors to relax rate controller output
     void relax_attitude_controllers();
 
+    // reset rate controller I terms
+    void reset_rate_controller_I_terms();
+
     // Sets yaw target to vehicle heading
-    void set_yaw_target_to_current_heading() { _attitude_target_euler_angle.z = _ahrs.yaw; }
+    void set_yaw_target_to_current_heading() { shift_ef_yaw_target(degrees(_ahrs.yaw - _attitude_target_euler_angle.z)*100.0f); }
 
     // Shifts earth frame yaw target by yaw_shift_cd. yaw_shift_cd should be in centidegrees and is added to the current target heading
     void shift_ef_yaw_target(float yaw_shift_cd);
@@ -154,22 +157,22 @@ public:
     // Set z-axis angular velocity in centidegrees/s
     void rate_bf_yaw_target(float rate_cds) { _rate_target_ang_vel.z = radians(rate_cds*0.01f); }
 
-    // Return roll rate step size in centidegrees/s that results in maximum output after 4 time steps
+    // Return roll rate step size in radians/s that results in maximum output after 4 time steps
     float max_rate_step_bf_roll();
 
-    // Return pitch rate step size in centidegrees/s that results in maximum output after 4 time steps
+    // Return pitch rate step size in radians/s that results in maximum output after 4 time steps
     float max_rate_step_bf_pitch();
 
-    // Return yaw rate step size in centidegrees/s that results in maximum output after 4 time steps
+    // Return yaw rate step size in radians/s that results in maximum output after 4 time steps
     float max_rate_step_bf_yaw();
 
-    // Return roll step size in centidegrees that results in maximum output after 4 time steps
+    // Return roll step size in radians that results in maximum output after 4 time steps
     float max_angle_step_bf_roll() { return max_rate_step_bf_roll()/_p_angle_roll.kP(); }
 
-    // Return pitch step size in centidegrees that results in maximum output after 4 time steps
+    // Return pitch step size in radians that results in maximum output after 4 time steps
     float max_angle_step_bf_pitch() { return max_rate_step_bf_pitch()/_p_angle_pitch.kP(); }
 
-    // Return yaw step size in centidegrees that results in maximum output after 4 time steps
+    // Return yaw step size in radians that results in maximum output after 4 time steps
     float max_angle_step_bf_yaw() { return max_rate_step_bf_yaw()/_p_angle_yaw.kP(); }
 
     // Return angular velocity in radians used in the angular velocity controller

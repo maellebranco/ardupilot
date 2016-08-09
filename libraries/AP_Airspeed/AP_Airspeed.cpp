@@ -51,7 +51,9 @@ extern const AP_HAL::HAL &hal;
  #define ARSPD_DEFAULT_PIN 0
 #elif defined(CONFIG_ARCH_BOARD_VRUBRAIN_V52)
  #define ARSPD_DEFAULT_PIN 0
-#elif defined(CONFIG_ARCH_BOARD_VRHERO_V10)
+#elif defined(CONFIG_ARCH_BOARD_VRCORE_V10)
+ #define ARSPD_DEFAULT_PIN 0
+#elif defined(CONFIG_ARCH_BOARD_VRBRAIN_V54)
  #define ARSPD_DEFAULT_PIN 0
 #elif defined(CONFIG_ARCH_BOARD_PX4FMU_V1)
  #define ARSPD_DEFAULT_PIN 11
@@ -82,7 +84,7 @@ const AP_Param::GroupInfo AP_Airspeed::var_info[] = {
     // @DisplayName: Airspeed enable
     // @Description: enable airspeed sensor
     // @Values: 0:Disable,1:Enable
-    AP_GROUPINFO("ENABLE",    0, AP_Airspeed, _enable, 1),
+    AP_GROUPINFO_FLAGS("ENABLE", 0, AP_Airspeed, _enable, 1, AP_PARAM_FLAG_ENABLE),
 
     // @Param: USE
     // @DisplayName: Airspeed use
@@ -137,9 +139,9 @@ const AP_Param::GroupInfo AP_Airspeed::var_info[] = {
 };
 
 
-AP_Airspeed::AP_Airspeed(const AP_Vehicle::FixedWing &parms)
+AP_Airspeed::AP_Airspeed()
     : _EAS2TAS(1.0f)
-    , _calibration(parms)
+    , _calibration()
 {
     AP_Param::setup_object_defaults(this, var_info);
 }

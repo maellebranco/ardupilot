@@ -103,13 +103,16 @@ void Plane::init_ardupilot()
     init_rc_out_main();
     
 #if CONFIG_HAL_BOARD == HAL_BOARD_PX4
-    // this must be before BoardConfig.init() so if
-    // BRD_SAFETYENABLE==0 then we don't have safety off yet
-    for (uint8_t tries=0; tries<10; tries++) {
-        if (setup_failsafe_mixing()) {
-            break;
+    if (!quadplane.enable) {
+        // this must be before BoardConfig.init() so if
+        // BRD_SAFETYENABLE==0 then we don't have safety off yet. For
+        // quadplanes we wait till AP_Motors is initialised
+        for (uint8_t tries=0; tries<10; tries++) {
+            if (setup_failsafe_mixing()) {
+                break;
+            }
+            hal.scheduler->delay(10);
         }
-        hal.scheduler->delay(10);
     }
 #endif
 
@@ -242,7 +245,7 @@ void Plane::init_ardupilot()
     // choose the nav controller
     set_nav_controller();
 
-    set_mode((FlightMode)g.initial_mode.get());
+    set_mode((FlightMode)g.initial_mode.get(), MODE_REASON_UNKNOWN);
 
     // set the correct flight mode
     // ---------------------------
@@ -262,7 +265,7 @@ void Plane::init_ardupilot()
 //********************************************************************************
 void Plane::startup_ground(void)
 {
-    set_mode(INITIALISING);
+    set_mode(INITIALISING, MODE_REASON_UNKNOWN);
 
     gcs_send_text(MAV_SEVERITY_INFO,"<startup_ground> Ground start");
 
@@ -308,7 +311,7 @@ enum FlightMode Plane::get_previous_mode() {
     return previous_mode; 
 }
 
-void Plane::set_mode(enum FlightMode mode)
+void Plane::set_mode(enum FlightMode mode, mode_reason_t reason)
 {
     if(control_mode == mode) {
         // don't switch modes if we are already in the correct mode.
@@ -349,6 +352,8 @@ void Plane::set_mode(enum FlightMode mode)
     // set mode
     previous_mode = control_mode;
     control_mode = mode;
+    previous_mode_reason = control_mode_reason;
+    control_mode_reason = reason;
 
     if (previous_mode == AUTOTUNE && control_mode != AUTOTUNE) {
         // restore last gains
@@ -447,6 +452,7 @@ void Plane::set_mode(enum FlightMode mode)
         do_loiter_at_location();
         break;
 
+    case AVOID_ADSB:
     case GUIDED:
         auto_throttle_mode = true;
         auto_navigation_mode = true;
@@ -504,6 +510,7 @@ bool Plane::mavlink_set_mode(uint8_t mode)
     case AUTOTUNE:
     case FLY_BY_WIRE_B:
     case CRUISE:
+    case AVOID_ADSB:
     case GUIDED:
     case AUTO:
     case RTL:
@@ -513,7 +520,7 @@ bool Plane::mavlink_set_mode(uint8_t mode)
     case QLOITER:
     case QLAND:
     case QRTL:
-        set_mode((enum FlightMode)mode);
+        set_mode((enum FlightMode)mode, MODE_REASON_GCS_COMMAND);
         return true;
     }
     return false;
@@ -547,19 +554,19 @@ void Plane::check_long_failsafe()
             flight_stage != AP_SpdHgtControl::FLIGHT_LAND_APPROACH) {
         if (failsafe.state == FAILSAFE_SHORT &&
                    (tnow - failsafe.ch3_timer_ms) > g.long_fs_timeout*1000) {
-            failsafe_long_on_event(FAILSAFE_LONG);
+            failsafe_long_on_event(FAILSAFE_LONG, MODE_REASON_RADIO_FAILSAFE);
         } else if (g.gcs_heartbeat_fs_enabled == GCS_FAILSAFE_HB_AUTO && control_mode == AUTO &&
                    failsafe.last_heartbeat_ms != 0 &&
                    (tnow - failsafe.last_heartbeat_ms) > g.long_fs_timeout*1000) {
-            failsafe_long_on_event(FAILSAFE_GCS);
+            failsafe_long_on_event(FAILSAFE_GCS, MODE_REASON_GCS_FAILSAFE);
         } else if (g.gcs_heartbeat_fs_enabled == GCS_FAILSAFE_HEARTBEAT &&
                    failsafe.last_heartbeat_ms != 0 &&
                    (tnow - failsafe.last_heartbeat_ms) > g.long_fs_timeout*1000) {
-            failsafe_long_on_event(FAILSAFE_GCS);
+            failsafe_long_on_event(FAILSAFE_GCS, MODE_REASON_GCS_FAILSAFE);
         } else if (g.gcs_heartbeat_fs_enabled == GCS_FAILSAFE_HB_RSSI && 
                    gcs[0].last_radio_status_remrssi_ms != 0 &&
                    (tnow - gcs[0].last_radio_status_remrssi_ms) > g.long_fs_timeout*1000) {
-            failsafe_long_on_event(FAILSAFE_GCS);
+            failsafe_long_on_event(FAILSAFE_GCS, MODE_REASON_GCS_FAILSAFE);
         }
     } else {
         // We do not change state but allow for user to change mode
@@ -583,13 +590,13 @@ void Plane::check_short_failsafe()
             flight_stage != AP_SpdHgtControl::FLIGHT_LAND_APPROACH) {
         // The condition is checked and the flag ch3_failsafe is set in radio.cpp
         if(failsafe.ch3_failsafe) {
-            failsafe_short_on_event(FAILSAFE_SHORT);
+            failsafe_short_on_event(FAILSAFE_SHORT, MODE_REASON_RADIO_FAILSAFE);
         }
     }
 
     if(failsafe.state == FAILSAFE_SHORT) {
         if(!failsafe.ch3_failsafe) {
-            failsafe_short_off_event();
+            failsafe_short_off_event(MODE_REASON_RADIO_FAILSAFE);
         }
     }
 }
@@ -702,6 +709,9 @@ void Plane::print_flight_mode(AP_HAL::BetterStream *port, uint8_t mode)
         break;
     case LOITER:
         port->print("Loiter");
+        break;
+    case AVOID_ADSB:
+        port->print("AVOID_ADSB");
         break;
     case GUIDED:
         port->print("Guided");

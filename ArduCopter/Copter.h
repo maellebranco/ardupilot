@@ -81,7 +81,6 @@
 #include <AP_Notify/AP_Notify.h>          // Notify library
 #include <AP_BattMonitor/AP_BattMonitor.h>     // Battery monitor library
 #include <AP_BoardConfig/AP_BoardConfig.h>     // board configuration library
-#include <AP_Frsky_Telem/AP_Frsky_Telem.h>
 #include <AP_LandingGear/AP_LandingGear.h>     // Landing Gear library
 #include <AP_Terrain/AP_Terrain.h>
 #include <AP_ADSB/AP_ADSB.h>
@@ -111,6 +110,13 @@
 #include <AC_PrecLand/AC_PrecLand.h>
 #include <AP_IRLock/AP_IRLock.h>
 #endif
+#if FRSKY_TELEM_ENABLED == ENABLED
+#include <AP_Frsky_Telem/AP_Frsky_Telem.h>
+#endif
+
+#if ADVANCED_FAILSAFE == ENABLED
+#include "afs_copter.h"
+#endif
 
 // Local modules
 #include "Parameters.h"
@@ -120,12 +126,17 @@
 #include <SITL/SITL.h>
 #endif
 
+
 class Copter : public AP_HAL::HAL::Callbacks {
 public:
     friend class GCS_MAVLINK_Copter;
     friend class AP_Rally_Copter;
     friend class Parameters;
+    friend class ParametersG2;
     friend class AP_Avoidance_Copter;
+#if ADVANCED_FAILSAFE == ENABLED
+    friend class AP_AdvancedFailsafe_Copter;
+#endif
 
     Copter(void);
 
@@ -311,6 +322,23 @@ private:
         uint8_t baro        : 1;    // true if baro is healthy
         uint8_t compass     : 1;    // true if compass is healthy
     } sensor_health;
+
+    // setup FRAME_MAV_TYPE
+#if (FRAME_CONFIG == QUAD_FRAME)
+ #define FRAME_MAV_TYPE MAV_TYPE_QUADROTOR
+#elif (FRAME_CONFIG == TRI_FRAME)
+ #define FRAME_MAV_TYPE MAV_TYPE_TRICOPTER
+#elif (FRAME_CONFIG == HEXA_FRAME || FRAME_CONFIG == Y6_FRAME)
+ #define FRAME_MAV_TYPE MAV_TYPE_HEXAROTOR
+#elif (FRAME_CONFIG == OCTA_FRAME || FRAME_CONFIG == OCTA_QUAD_FRAME)
+ #define FRAME_MAV_TYPE MAV_TYPE_OCTOROTOR
+#elif (FRAME_CONFIG == HELI_FRAME)
+ #define FRAME_MAV_TYPE MAV_TYPE_HELICOPTER
+#elif (FRAME_CONFIG == SINGLE_FRAME || FRAME_CONFIG == COAX_FRAME)  //because mavlink did not define a singlecopter, we use a quad
+ #define FRAME_MAV_TYPE MAV_TYPE_QUADROTOR
+#else
+ #error Unrecognised frame type
+#endif
 
     // Motor Output
 #if FRAME_CONFIG == QUAD_FRAME
@@ -573,6 +601,9 @@ private:
     // true if we are out of time in our event timeslice
     bool gcs_out_of_time;
 
+    // last valid RC input time
+    uint32_t last_radio_update_ms;
+    
     // Top-level logic
     // setup the var_info table
     AP_Param param_loader;
@@ -799,6 +830,9 @@ private:
     void autotune_updating_p_up_d_down(float &tune_d, float tune_d_min, float tune_d_step_ratio, float &tune_p, float tune_p_min, float tune_p_max, float tune_p_step_ratio, float target, float measurement_min, float measurement_max);
     void autotune_twitching_measure_acceleration(float &rate_of_change, float rate_measurement, float &rate_measurement_max);
     void avoidance_adsb_update(void);
+#if ADVANCED_FAILSAFE == ENABLED
+    void afs_fs_check(void);
+#endif
     bool brake_init(bool ignore_checks);
     void brake_run();
     void brake_timeout_to_loiter_ms(uint32_t timeout_ms);
@@ -1034,7 +1068,6 @@ private:
     bool optflow_position_ok();
     void update_auto_armed();
     void check_usb_mux(void);
-    void frsky_telemetry_send(void);
     bool should_log(uint32_t mask);
     bool current_mode_has_user_takeoff(bool must_navigate);
     bool do_user_takeoff(float takeoff_alt_cm, bool must_navigate);

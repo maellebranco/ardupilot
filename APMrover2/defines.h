@@ -7,6 +7,14 @@
 #define TRUE 1
 #define FALSE 0
 
+// Just so that it's completely clear...
+#define ENABLED                 1
+#define DISABLED                0
+
+// this avoids a very common config error
+#define ENABLE ENABLED
+#define DISABLE DISABLED
+
 #define DEBUG 0
 #define SERVO_MAX 4500	// This value represents 45 degrees and is just an arbitrary representation of servo max travel.
 
@@ -68,3 +76,11 @@ enum mode {
 #define MASK_LOG_RC     		(1<<14)
 #define MASK_LOG_ARM_DISARM     (1<<15)
 #define MASK_LOG_IMU_RAW        (1UL<<19)
+
+// for mavlink SET_POSITION_TARGET messages
+#define MAVLINK_SET_POS_TYPE_MASK_POS_IGNORE      ((1<<0) | (1<<1) | (1<<2))
+#define MAVLINK_SET_POS_TYPE_MASK_VEL_IGNORE      ((1<<3) | (1<<4) | (1<<5))
+#define MAVLINK_SET_POS_TYPE_MASK_ACC_IGNORE      ((1<<6) | (1<<7) | (1<<8))
+#define MAVLINK_SET_POS_TYPE_MASK_FORCE           (1<<9)
+#define MAVLINK_SET_POS_TYPE_MASK_YAW_IGNORE      (1<<10)
+#define MAVLINK_SET_POS_TYPE_MASK_YAW_RATE_IGNORE (1<<11)

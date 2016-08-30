@@ -418,7 +418,7 @@ private:
 
 #if FRSKY_TELEM_ENABLED == ENABLED
     // FrSky telemetry support
-    AP_Frsky_Telem frsky_telemetry {ahrs, battery};
+    AP_Frsky_Telem frsky_telemetry {ahrs, battery, rangefinder};
 #endif
 
     // Airspeed Sensors
@@ -1003,7 +1003,6 @@ private:
     void print_comma(void);
     void servo_write(uint8_t ch, uint16_t pwm);
     bool should_log(uint32_t mask);
-    void frsky_telemetry_send(void);
     int8_t throttle_percentage(void);
     void change_arm_state(void);
     bool disarm_motors(void);
@@ -1013,6 +1012,7 @@ private:
     void takeoff_calc_pitch(void);
     int8_t takeoff_tail_hold(void);
     int16_t get_takeoff_pitch_min_cd(void);
+    void complete_auto_takeoff(void);
     void print_hit_enter();
     void ahrs_update();
     void update_speed_height(void);

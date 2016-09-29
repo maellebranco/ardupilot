@@ -23,31 +23,19 @@
 #include "AP_Frsky_Telem.h"
 extern const AP_HAL::HAL& hal;
 
+ObjectArray<mavlink_statustext_t> AP_Frsky_Telem::_statustext_queue(FRSKY_TELEM_PAYLOAD_STATUS_CAPACITY);
+
 //constructor
 AP_Frsky_Telem::AP_Frsky_Telem(AP_AHRS &ahrs, const AP_BattMonitor &battery, const RangeFinder &rng) :
     _ahrs(ahrs),
     _battery(battery),
-    _rng(rng),
-    _port(NULL),
-    _protocol(),
-    _initialised_uart(),
-    _crc(0),
-    _ap(),
-    _relative_home_altitude(0.0f),
-    _control_sensors_timer(),
-    _paramID(),
-    _gps(),
-    _passthrough(),
-    _SPort(),
-    _D(),
-    _msg_chunk()
+    _rng(rng)
     {}
 
 /*
  * init - perform required initialisation
- * for Copter
  */
-void AP_Frsky_Telem::init(const AP_SerialManager &serial_manager, const char *firmware_str, const uint8_t mav_type, AP_Float *fs_batt_voltage, AP_Float *fs_batt_mah, uint32_t *ap_value, int32_t *home_distance, int32_t *home_bearing)
+void AP_Frsky_Telem::init(const AP_SerialManager &serial_manager, const char *firmware_str, const uint8_t mav_type, AP_Float *fs_batt_voltage, AP_Float *fs_batt_mah, uint32_t *ap_valuep)
 {
     // check for protocol configured for a serial port - only the first serial port with one of these protocols will then run (cannot have FrSky on multiple serial ports)
     if ((_port = serial_manager.find_serial(AP_SerialManager::SerialProtocol_FrSky_D, 0))) {
@@ -56,43 +44,28 @@ void AP_Frsky_Telem::init(const AP_SerialManager &serial_manager, const char *fi
         _protocol = AP_SerialManager::SerialProtocol_FrSky_SPort; // FrSky SPort protocol (X-receivers)
     } else if ((_port = serial_manager.find_serial(AP_SerialManager::SerialProtocol_FrSky_SPort_Passthrough, 0))) {
         _protocol = AP_SerialManager::SerialProtocol_FrSky_SPort_Passthrough; // FrSky SPort and SPort Passthrough (OpenTX) protocols (X-receivers)
-        // add firmware and frame info to message queue
-        queue_message(MAV_SEVERITY_INFO, firmware_str);
+
         // save main parameters locally
         _params.mav_type = mav_type; // frame type (see MAV_TYPE in Mavlink definition file common.h)
         _params.fs_batt_voltage = fs_batt_voltage; // failsafe battery voltage in volts
         _params.fs_batt_mah = fs_batt_mah; // failsafe reserve capacity in mAh
-        _ap.value = ap_value; // ap bit-field
-        _ap.home_distance = home_distance;
-        _ap.home_bearing = home_bearing;
+        if (ap_valuep == nullptr) { // ap bit-field
+            _ap.valuep = &_ap.value;
+        } else {
+            _ap.valuep = ap_valuep;
+        }
     }
     
     if (_port != NULL) {
         hal.scheduler->register_io_process(FUNCTOR_BIND_MEMBER(&AP_Frsky_Telem::tick, void));
         // we don't want flow control for either protocol
         _port->set_flow_control(AP_HAL::UARTDriver::FLOW_CONTROL_DISABLE);
+
+        // add firmware and frame info to message queue
+        queue_message(MAV_SEVERITY_INFO, firmware_str);
     }
 }
 
-/*
- * init - perform required initialisation
- * for Plane and Rover
- */
-void AP_Frsky_Telem::init(const AP_SerialManager &serial_manager)
-{
-    // check for protocol configured for a serial port - only the first serial port with one of these protocols will then run (cannot have FrSky on multiple serial ports)
-    if ((_port = serial_manager.find_serial(AP_SerialManager::SerialProtocol_FrSky_D, 0))) {
-        _protocol = AP_SerialManager::SerialProtocol_FrSky_D; // FrSky D protocol (D-receivers)
-    } else if ((_port = serial_manager.find_serial(AP_SerialManager::SerialProtocol_FrSky_SPort, 0))) {
-        _protocol = AP_SerialManager::SerialProtocol_FrSky_SPort; // FrSky SPort protocol (X-receivers)
-    }
-
-    if (_port != NULL) {
-        hal.scheduler->register_io_process(FUNCTOR_BIND_MEMBER(&AP_Frsky_Telem::tick, void));
-        // we don't want flow control for either protocol
-        _port->set_flow_control(AP_HAL::UARTDriver::FLOW_CONTROL_DISABLE);
-    }
-}
 
 /*
  * send telemetry data
@@ -125,59 +98,61 @@ void AP_Frsky_Telem::send_SPort_Passthrough(void)
             _passthrough.send_attiandrng = false; // next iteration, check if we should send something other
         } else { // check if there's other data to send
             _passthrough.send_attiandrng = true; // next iteration, send attitude b/c it needs frequent updates to remain smooth
-            // build mavlink message queue for control_sensors flags
-            control_sensors_check();
+            // build message queue for sensor_status_flags
+            check_sensor_status_flags();
+            // build message queue for ekf_status
+            check_ekf_status();
             // if there's any message in the queue, start sending them chunk by chunk; three times each chunk
-            if (_msg.sent_idx != _msg.queued_idx) {
-                send_uint32(DIY_FIRST_ID, get_next_msg_chunk());
+            if (get_next_msg_chunk()) {
+                send_uint32(DIY_FIRST_ID, _msg_chunk.chunk);
                 return;
             }
             // send other sensor data if it's time for them, and reset the corresponding timer if sent
             uint32_t now = AP_HAL::millis();
-            if (((now - _passthrough.timer_params) > 1000) && (!AP_Notify::flags.armed)) {
+            if (((now - _passthrough.params_timer) > 1000) && (!AP_Notify::flags.armed)) {
                 send_uint32(DIY_FIRST_ID+7, calc_param());
-                _passthrough.timer_params = AP_HAL::millis();
+                _passthrough.params_timer = AP_HAL::millis();
                 return;
-            } else if ((now - _passthrough.timer_ap_status) > 500) {
+            } else if ((now - _passthrough.ap_status_timer) > 500) {
                 send_uint32(DIY_FIRST_ID+1, calc_ap_status());
-                _passthrough.timer_ap_status = AP_HAL::millis();
+                _passthrough.ap_status_timer = AP_HAL::millis();
                 return;
-            } else if ((now - _passthrough.timer_batt) > 1000) {
+            } else if ((now - _passthrough.batt_timer) > 1000) {
                 send_uint32(DIY_FIRST_ID+3, calc_batt());
-                _passthrough.timer_batt = AP_HAL::millis();
+                _passthrough.batt_timer = AP_HAL::millis();
                 return;
-            } else if ((now - _passthrough.timer_gps_status) > 1000) {
+            } else if ((now - _passthrough.gps_status_timer) > 1000) {
                 send_uint32(DIY_FIRST_ID+2, calc_gps_status());
-                _passthrough.timer_gps_status = AP_HAL::millis();
+                _passthrough.gps_status_timer = AP_HAL::millis();
                 return;
-            } else if ((now - _passthrough.timer_home) > 500) {
+            } else if ((now - _passthrough.home_timer) > 500) {
                 send_uint32(DIY_FIRST_ID+4, calc_home());
-                _passthrough.timer_home = AP_HAL::millis();
+                _passthrough.home_timer = AP_HAL::millis();
                 return;
-            } else if ((now - _passthrough.timer_velandyaw) > 500) {
+            } else if ((now - _passthrough.velandyaw_timer) > 500) {
                 send_uint32(DIY_FIRST_ID+5, calc_velandyaw());
-                _passthrough.timer_velandyaw = AP_HAL::millis();
+                _passthrough.velandyaw_timer = AP_HAL::millis();
                 return;
-            } else if ((now - _passthrough.timer_gps_latlng) > 1000) {
+            } else if ((now - _passthrough.gps_latlng_timer) > 1000) {
                 send_uint32(GPS_LONG_LATI_FIRST_ID, calc_gps_latlng(&_passthrough.send_latitude)); // gps latitude or longitude
                 if (!_passthrough.send_latitude) { // we've cycled and sent one each of longitude then latitude, so reset the timer
-                    _passthrough.timer_gps_latlng = AP_HAL::millis();
+                    _passthrough.gps_latlng_timer = AP_HAL::millis();
                 }
                 return;
-            } else if ((now - _passthrough.timer_vario) > 500) {
+            } else if ((now - _passthrough.vario_timer) > 500) {
                 Vector3f velNED;
                 if (_ahrs.get_velocity_NED(velNED)) {
                     send_uint32(VARIO_FIRST_ID, (int32_t)roundf(-velNED.z*100)); // vertical velocity in cm/s, +ve up
                 }
-                _passthrough.timer_vario = AP_HAL::millis();
+                _passthrough.vario_timer = AP_HAL::millis();
                 return;
-            } else if ((now - _passthrough.timer_alt) > 1000) {
+            } else if ((now - _passthrough.alt_timer) > 1000) {
                 send_uint32(ALT_FIRST_ID, (int32_t)_relative_home_altitude); // altitude in cm above home position
-                _passthrough.timer_alt = AP_HAL::millis();
+                _passthrough.alt_timer = AP_HAL::millis();
                 return;
-            } else if ((now - _passthrough.timer_vfas) > 1000) {
+            } else if ((now - _passthrough.vfas_timer) > 1000) {
                 send_uint32(VFAS_FIRST_ID, (uint32_t)roundf(_battery.voltage() * 100.0f)); // battery pack voltage in volts
-                _passthrough.timer_vfas = AP_HAL::millis();
+                _passthrough.vfas_timer = AP_HAL::millis();
                 return;
             }
         }
@@ -443,23 +418,27 @@ void  AP_Frsky_Telem::send_uint16(uint16_t id, uint16_t data)
 }
 
 /*
- * grabs one "chunk" (4 bytes) of the mavlink statustext message to be transmitted
+ * grabs one "chunk" (4 bytes) of the queued message to be transmitted
  * for FrSky SPort Passthrough (OpenTX) protocol (X-receivers)
  */
-uint32_t AP_Frsky_Telem::get_next_msg_chunk(void)
+bool AP_Frsky_Telem::get_next_msg_chunk(void)
 {
+    if (_statustext_queue.empty()) {
+        return false;
+    }
+
     if (_msg_chunk.repeats == 0) {
         _msg_chunk.chunk = 0;
-        uint8_t character = _msg.data[_msg.sent_idx].text[_msg_chunk.char_index++];
+        uint8_t character = _statustext_queue[0]->text[_msg_chunk.char_index++];
         if (character) {
             _msg_chunk.chunk |= character<<24;
-            character = _msg.data[_msg.sent_idx].text[_msg_chunk.char_index++];
+            character = _statustext_queue[0]->text[_msg_chunk.char_index++];
             if (character) {
                 _msg_chunk.chunk |= character<<16;
-                character = _msg.data[_msg.sent_idx].text[_msg_chunk.char_index++];
+                character = _statustext_queue[0]->text[_msg_chunk.char_index++];
                 if (character) {
                     _msg_chunk.chunk |= character<<8;
-                    character = _msg.data[_msg.sent_idx].text[_msg_chunk.char_index++];
+                    character = _statustext_queue[0]->text[_msg_chunk.char_index++];
                     if (character) {
                         _msg_chunk.chunk |= character;
                     }
@@ -469,19 +448,19 @@ uint32_t AP_Frsky_Telem::get_next_msg_chunk(void)
         if (!character) { // we've reached the end of the message (string terminated by '\0')
             _msg_chunk.char_index = 0;
             // add severity which is sent as the MSB of the last three bytes of the last chunk (bits 24, 16, and 8) since a character is on 7 bits
-            _msg_chunk.chunk |= (_msg.data[_msg.sent_idx].severity & 0x4)<<21;
-            _msg_chunk.chunk |= (_msg.data[_msg.sent_idx].severity & 0x2)<<14;
-            _msg_chunk.chunk |= (_msg.data[_msg.sent_idx].severity & 0x1)<<7;
+            _msg_chunk.chunk |= (_statustext_queue[0]->severity & 0x4)<<21;
+            _msg_chunk.chunk |= (_statustext_queue[0]->severity & 0x2)<<14;
+            _msg_chunk.chunk |= (_statustext_queue[0]->severity & 0x1)<<7;
         }
     }
     _msg_chunk.repeats++;
     if (_msg_chunk.repeats > 2) { // repeat each message chunk 3 times to ensure transmission
         _msg_chunk.repeats = 0;
         if (_msg_chunk.char_index == 0) { // if we're ready for the next message
-            _msg.sent_idx = (_msg.sent_idx + 1) % MSG_BUFFER_LENGTH; // flag the current message as sent
+            _statustext_queue.remove(0);
         }
     }
-    return _msg_chunk.chunk;
+    return true;
 }
 
 /*
@@ -490,55 +469,105 @@ uint32_t AP_Frsky_Telem::get_next_msg_chunk(void)
  */
 void AP_Frsky_Telem::queue_message(MAV_SEVERITY severity, const char *text)
 {
-    _msg.data[_msg.queued_idx].severity = severity;
-    _msg.data[_msg.queued_idx].text = text;
-    _msg.queued_idx = (_msg.queued_idx + 1) % MSG_BUFFER_LENGTH;
+    mavlink_statustext_t statustext{};
+
+    statustext.severity = severity;
+    strncpy(statustext.text, text, sizeof(statustext.text));
+
+    // The force push will ensure comm links do not block other comm links forever if they fail.
+    // If we push to a full buffer then we overwrite the oldest entry, effectively removing the
+    // block but not until the buffer fills up.
+    _statustext_queue.push_force(statustext);
 }
 
 /*
- * add control_sensors information to message cue, normally passed as sys_status mavlink messages to the GCS, for transmission through FrSky link
+ * add sensor_status_flags information to message cue, normally passed as sys_status mavlink messages to the GCS, for transmission through FrSky link
  * for FrSky SPort Passthrough (OpenTX) protocol (X-receivers)
  */
-void AP_Frsky_Telem::control_sensors_check(void)
+void AP_Frsky_Telem::check_sensor_status_flags(void)
 {
     uint32_t now = AP_HAL::millis();
 
-    if ((now - _control_sensors_timer) > 5000) { // prevent repeating any system_status messages unless 5 seconds have passed
+    if ((now - check_sensor_status_timer) > 5000) { // prevent repeating any system_status messages unless 5 seconds have passed
         // only one error is reported at a time (in order of preference). Same setup and displayed messages as Mission Planner.
-        if ((_ap.sensor_status_error_flags & MAV_SYS_STATUS_SENSOR_GPS) > 0) {
+        if ((_ap.sensor_status_flags & MAV_SYS_STATUS_SENSOR_GPS) > 0) {
             queue_message(MAV_SEVERITY_CRITICAL, "Bad GPS Health");
-            _control_sensors_timer = now;
-        } else if ((_ap.sensor_status_error_flags & MAV_SYS_STATUS_SENSOR_3D_GYRO) > 0) {
+            check_sensor_status_timer = now;
+        } else if ((_ap.sensor_status_flags & MAV_SYS_STATUS_SENSOR_3D_GYRO) > 0) {
             queue_message(MAV_SEVERITY_CRITICAL, "Bad Gyro Health");
-            _control_sensors_timer = now;
-        } else if ((_ap.sensor_status_error_flags & MAV_SYS_STATUS_SENSOR_3D_ACCEL) > 0) {
+            check_sensor_status_timer = now;
+        } else if ((_ap.sensor_status_flags & MAV_SYS_STATUS_SENSOR_3D_ACCEL) > 0) {
             queue_message(MAV_SEVERITY_CRITICAL, "Bad Accel Health");
-            _control_sensors_timer = now;
-        } else if ((_ap.sensor_status_error_flags & MAV_SYS_STATUS_SENSOR_3D_MAG) > 0) {
+            check_sensor_status_timer = now;
+        } else if ((_ap.sensor_status_flags & MAV_SYS_STATUS_SENSOR_3D_MAG) > 0) {
             queue_message(MAV_SEVERITY_CRITICAL, "Bad Compass Health");
-            _control_sensors_timer = now;
-        } else if ((_ap.sensor_status_error_flags & MAV_SYS_STATUS_SENSOR_ABSOLUTE_PRESSURE) > 0) {
+            check_sensor_status_timer = now;
+        } else if ((_ap.sensor_status_flags & MAV_SYS_STATUS_SENSOR_ABSOLUTE_PRESSURE) > 0) {
             queue_message(MAV_SEVERITY_CRITICAL, "Bad Baro Health");
-            _control_sensors_timer = now;
-        } else if ((_ap.sensor_status_error_flags & MAV_SYS_STATUS_SENSOR_LASER_POSITION) > 0) {
+            check_sensor_status_timer = now;
+        } else if ((_ap.sensor_status_flags & MAV_SYS_STATUS_SENSOR_LASER_POSITION) > 0) {
             queue_message(MAV_SEVERITY_CRITICAL, "Bad LiDAR Health");
-            _control_sensors_timer = now;
-        } else if ((_ap.sensor_status_error_flags & MAV_SYS_STATUS_SENSOR_OPTICAL_FLOW) > 0) {
+            check_sensor_status_timer = now;
+        } else if ((_ap.sensor_status_flags & MAV_SYS_STATUS_SENSOR_OPTICAL_FLOW) > 0) {
             queue_message(MAV_SEVERITY_CRITICAL, "Bad OptFlow Health");
-            _control_sensors_timer = now;
-        } else if ((_ap.sensor_status_error_flags & MAV_SYS_STATUS_TERRAIN) > 0) {
+            check_sensor_status_timer = now;
+        } else if ((_ap.sensor_status_flags & MAV_SYS_STATUS_TERRAIN) > 0) {
             queue_message(MAV_SEVERITY_CRITICAL, "Bad or No Terrain Data");
-            _control_sensors_timer = now;
-        } else if ((_ap.sensor_status_error_flags & MAV_SYS_STATUS_GEOFENCE) > 0) {
+            check_sensor_status_timer = now;
+        } else if ((_ap.sensor_status_flags & MAV_SYS_STATUS_GEOFENCE) > 0) {
             queue_message(MAV_SEVERITY_CRITICAL, "Geofence Breach");
-            _control_sensors_timer = now;
-        } else if ((_ap.sensor_status_error_flags & MAV_SYS_STATUS_AHRS) > 0) {
+            check_sensor_status_timer = now;
+        } else if ((_ap.sensor_status_flags & MAV_SYS_STATUS_AHRS) > 0) {
             queue_message(MAV_SEVERITY_CRITICAL, "Bad AHRS");
-            _control_sensors_timer = now;
+            check_sensor_status_timer = now;
+        } else if ((_ap.sensor_status_flags & MAV_SYS_STATUS_SENSOR_RC_RECEIVER) > 0) {
+            queue_message(MAV_SEVERITY_CRITICAL, "No RC Receiver");
+            check_sensor_status_timer = now;
+        } else if ((_ap.sensor_status_flags & MAV_SYS_STATUS_LOGGING) > 0) {
+            queue_message(MAV_SEVERITY_CRITICAL, "Bad Logging");
+            check_sensor_status_timer = now;
         }
     }
 }
 
+/*
+ * add innovation variance information to message cue, normally passed as ekf_status_report mavlink messages to the GCS, for transmission through FrSky link
+ * for FrSky SPort Passthrough (OpenTX) protocol (X-receivers)
+ */
+void AP_Frsky_Telem::check_ekf_status(void)
+{
+    // get variances
+    float velVar, posVar, hgtVar, tasVar;
+    Vector3f magVar;
+    Vector2f offset;
+    if (_ahrs.get_variances(velVar, posVar, hgtVar, magVar, tasVar, offset)) {
+        uint32_t now = AP_HAL::millis();
+        if ((now - check_ekf_status_timer) > 10000) { // prevent repeating any ekf_status message unless 10 seconds have passed
+            // multiple errors can be reported at a time. Same setup as Mission Planner.
+            if (velVar >= 1) {
+                queue_message(MAV_SEVERITY_CRITICAL, "Error velocity variance");
+                check_ekf_status_timer = now;
+            }
+            if (posVar >= 1) {
+                queue_message(MAV_SEVERITY_CRITICAL, "Error pos horiz variance");
+                check_ekf_status_timer = now;
+            }
+            if (hgtVar >= 1) {
+                queue_message(MAV_SEVERITY_CRITICAL, "Error pos vert variance");
+                check_ekf_status_timer = now;
+            }
+            if (magVar.length() >= 1) {
+                queue_message(MAV_SEVERITY_CRITICAL, "Error compass variance");
+                check_ekf_status_timer = now;
+            }
+            if (tasVar >= 1) {
+                queue_message(MAV_SEVERITY_CRITICAL, "Error terrain alt variance");
+                check_ekf_status_timer = now;
+            }
+        }
+    }
+}
+      
 /*
  * prepare parameter data
  * for FrSky SPort Passthrough (OpenTX) protocol (X-receivers)
@@ -557,10 +586,14 @@ uint32_t AP_Frsky_Telem::calc_param(void)
         param = _params.mav_type;                                    // frame type (see MAV_TYPE in Mavlink definition file common.h)
         break;
     case 2:
-        param = (uint32_t)roundf(*_params.fs_batt_voltage * 100.0f); // battery failsafe voltage in centivolts
+        if (_params.fs_batt_voltage != nullptr) {
+            param = (uint32_t)roundf(*_params.fs_batt_voltage * 100.0f); // battery failsafe voltage in centivolts
+        }
         break;
     case 3:
-        param = (uint32_t)roundf(*_params.fs_batt_mah);              // battery failsafe capacity in mAh
+        if (_params.fs_batt_mah != nullptr) {
+            param = (uint32_t)roundf(*_params.fs_batt_mah);              // battery failsafe capacity in mAh
+        }
         break;
     case 4:
         param = (uint32_t)roundf(_battery.pack_capacity_mah());      // battery pack capacity in mAh as configured by user
@@ -617,7 +650,7 @@ uint32_t AP_Frsky_Telem::calc_gps_status(void)
     // GPS vertical dilution of precision in dm
     gps_status |= prep_number(roundf(_ahrs.get_gps().get_vdop() * 0.1f),2,1)<<GPS_VDOP_OFFSET; 
     // Altitude MSL in dm
-    Location loc = _ahrs.get_gps().location();
+    const Location &loc = _ahrs.get_gps().location();
     gps_status |= prep_number(roundf(loc.alt * 0.1f),2,2)<<GPS_ALTMSL_OFFSET; 
     return gps_status;
 }
@@ -648,11 +681,11 @@ uint32_t AP_Frsky_Telem::calc_ap_status(void)
     uint32_t ap_status;
 
     // control/flight mode number (limit to 31 (0x1F) since the value is stored on 5 bits)
-    ap_status = (uint8_t)(_ap.control_mode & AP_CONTROL_MODE_LIMIT);
+    ap_status = (uint8_t)((_ap.control_mode+1) & AP_CONTROL_MODE_LIMIT);
     // simple/super simple modes flags
-    ap_status |= (uint8_t)(*_ap.value & AP_SSIMPLE_FLAGS)<<AP_SSIMPLE_OFFSET;
-    // land complete flag
-    ap_status |= (uint8_t)(*_ap.value & AP_LANDCOMPLETE_FLAG);
+    ap_status |= (uint8_t)(*_ap.valuep & AP_SSIMPLE_FLAGS)<<AP_SSIMPLE_OFFSET;
+    // is_flying flag
+    ap_status |= (uint8_t)((*_ap.valuep & AP_ISFLYING_FLAG) ^ AP_ISFLYING_FLAG);
     // armed flag
     ap_status |= (uint8_t)(AP_Notify::flags.armed)<<AP_ARMED_OFFSET;
     // battery failsafe flag
@@ -668,13 +701,18 @@ uint32_t AP_Frsky_Telem::calc_ap_status(void)
  */
 uint32_t AP_Frsky_Telem::calc_home(void)
 {
-    uint32_t home;
-
-    // distance between vehicle and home location in meters
-    home = prep_number(roundf(*_ap.home_distance * 0.01f), 3, 2);
-    // altitude between vehicle and home location in decimeters
+    uint32_t home = 0;
     Location loc;
-    if (_ahrs.get_position(loc)) {
+    if (_ahrs.get_position(loc)) {            
+        // check home_loc is valid
+        const Location &home_loc = _ahrs.get_home();
+        if (home_loc.lat != 0 || home_loc.lng != 0) {
+            // distance between vehicle and home_loc in meters
+            home = prep_number(roundf(get_distance(home_loc, loc)), 3, 2);
+            // angle from front of vehicle to the direction of home_loc in 3 degree increments (just in case, limit to 127 (0x7F) since the value is stored on 7 bits)
+            home |= (((uint8_t)roundf(get_bearing_cd(loc,home_loc) * 0.00333f)) & HOME_BEARING_LIMIT)<<HOME_BEARING_OFFSET;
+        }
+        // altitude between vehicle and home_loc
         _relative_home_altitude = loc.alt;
         if (!loc.flags.relative_alt) {
             // loc.alt has home altitude added, remove it
@@ -684,8 +722,6 @@ uint32_t AP_Frsky_Telem::calc_home(void)
         _relative_home_altitude = 0;
     }
     home |= prep_number(roundf(_relative_home_altitude * 0.1f), 3, 2)<<HOME_ALT_OFFSET;
-    // angle between vehicle and home loc (relative to North) in 3 degree increments (just in case, limit to 127 (0x7F) since the value is stored on 7 bits)
-    home |= (((uint8_t)roundf(*_ap.home_bearing * 0.00333f)) & HOME_BEARING_LIMIT)<<HOME_BEARING_OFFSET;
     return home;
 }
 
@@ -703,8 +739,13 @@ uint32_t AP_Frsky_Telem::calc_velandyaw(void)
 
     // vertical velocity in dm/s
     velandyaw = prep_number(roundf(velNED.z * 10), 2, 1);
-    // horizontal velocity in dm/s
-    velandyaw |= prep_number(roundf(_ahrs.groundspeed_vector().length() * 10), 2, 1)<<VELANDYAW_XYVEL_OFFSET;
+    // horizontal velocity in dm/s (use airspeed if available, otherwise use groundspeed)
+    float airspeed;
+    if (_ahrs.airspeed_estimate_true(&airspeed)) {
+        velandyaw |= prep_number(roundf(airspeed * 0.1f), 2, 1)<<VELANDYAW_XYVEL_OFFSET;
+    } else {
+        velandyaw |= prep_number(roundf(_ahrs.groundspeed_vector().length() * 10), 2, 1)<<VELANDYAW_XYVEL_OFFSET;
+    }
     // yaw from [0;36000] centidegrees to .2 degree increments [0;1800] (just in case, limit to 2047 (0x7FF) since the value is stored on 11 bits)
     velandyaw |= ((uint16_t)roundf(_ahrs.yaw_sensor * 0.05f) & VELANDYAW_YAW_LIMIT)<<VELANDYAW_YAW_OFFSET;
     return velandyaw;
@@ -836,7 +877,7 @@ void AP_Frsky_Telem::calc_gps_position(void)
     float speed;
 
     if (_ahrs.get_gps().status() >= 3) {
-        Location loc = _ahrs.get_gps().location(); //get gps instance 0
+        const Location &loc = _ahrs.get_gps().location(); //get gps instance 0
         lat = format_gps(fabsf(loc.lat/10000000.0f));
         _gps.latdddmm = lat;
         _gps.latmmmm = (lat - _gps.latdddmm) * 10000;

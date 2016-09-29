@@ -51,6 +51,7 @@ extern "C" {
     int mb12xx_main(int, char **);
     int pwm_input_main(int, char **);
     int uavcan_main(int, char **);
+    int fmu_main(int, char **);
 };
 
 
@@ -196,6 +197,10 @@ void AP_BoardConfig::px4_setup_canbus(void)
 {
 #if CONFIG_HAL_BOARD == HAL_BOARD_PX4 && !defined(CONFIG_ARCH_BOARD_PX4FMU_V1)
     if (px4.can_enable >= 1) {
+        // give time for other drivers to fully start before we start
+        // canbus. This prevents a race where a canbus mag comes up
+        // before the hmc5883
+        hal.scheduler->delay(500);
         if (px4_start_driver(uavcan_main, "uavcan", "start")) {
             hal.console->printf("UAVCAN: started\n");            
             // give some time for CAN bus initialisation
@@ -203,6 +208,8 @@ void AP_BoardConfig::px4_setup_canbus(void)
         } else {
             hal.console->printf("UAVCAN: failed to start\n");
         }
+        // give time for canbus drivers to register themselves
+        hal.scheduler->delay(1000);
     }
     if (px4.can_enable >= 2) {
         if (px4_start_driver(uavcan_main, "uavcan", "start fw")) {
@@ -462,6 +469,17 @@ void AP_BoardConfig::px4_start_fmuv4_sensors(void)
  */
 void AP_BoardConfig::px4_start_common_sensors(void)
 {
+#if defined(CONFIG_ARCH_BOARD_PX4FMU_V4)
+    /*
+      this works around an issue with some FMUv4 hardware (eg. copies
+      of the Pixracer) which have incorrect components leading to
+      sensor brownout on boot
+     */
+    if (px4_start_driver(fmu_main, "fmu", "sensor_reset 20")) {
+        printf("FMUv4 sensor reset complete\n");        
+    }
+#endif
+
     if (px4_start_driver(ms5611_main, "ms5611", "start")) {
         printf("ms5611 started OK\n");
     } else {
@@ -739,8 +757,8 @@ void AP_BoardConfig::px4_setup()
     px4_setup_safety();
     px4_setup_uart();
     px4_setup_sbus();
-    px4_setup_canbus();
     px4_setup_drivers();
+    px4_setup_canbus();
 }
 
 #endif // HAL_BOARD_PX4

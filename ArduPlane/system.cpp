@@ -102,7 +102,7 @@ void Plane::init_ardupilot()
     set_control_channels();
     init_rc_out_main();
     
-#if CONFIG_HAL_BOARD == HAL_BOARD_PX4
+#if HAVE_PX4_MIXER
     if (!quadplane.enable) {
         // this must be before BoardConfig.init() so if
         // BRD_SAFETYENABLE==0 then we don't have safety off yet. For
@@ -160,7 +160,9 @@ void Plane::init_ardupilot()
     // setup frsky
 #if FRSKY_TELEM_ENABLED == ENABLED
     // setup frsky, and pass a number of parameters to the library
-    frsky_telemetry.init(serial_manager);
+    frsky_telemetry.init(serial_manager, FIRMWARE_STRING,
+                         MAV_TYPE_FIXED_WING,
+                         &g.fs_batt_voltage, &g.fs_batt_mah);
 #endif
 
     mavlink_system.sysid = g.sysid_this_mav;

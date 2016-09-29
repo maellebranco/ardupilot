@@ -485,6 +485,14 @@ const AP_Param::GroupInfo NavEKF2::var_info[] = {
     // @Units: %
     AP_GROUPINFO("RNG_USE_HGT", 42, NavEKF2, _useRngSwHgt, -1),
 
+    // @Param: TERR_GRAD
+    // @DisplayName: Maximum terrain gradient
+    // @Description: Specifies the maxium gradient of the terrain below the vehicle when it is using range finder as a height reference
+    // @Range: 0 0.2
+    // @Increment: 0.01
+    // @User: Advanced
+    AP_GROUPINFO("TERR_GRAD", 43, NavEKF2, _terrGradMax, 0.1f),
+
     AP_GROUPEND
 };
 
@@ -649,10 +657,35 @@ void NavEKF2::UpdateFilter(void)
     // If the current core selected has a bad fault score or is unhealthy, switch to a healthy core with the lowest fault score
     if (core[primary].faultScore() > 0.0f || !core[primary].healthy()) {
         float score = 1e9f;
+        bool changed = false;
         for (uint8_t i=0; i<num_cores; i++) {
             if (core[i].healthy()) {
                 float tempScore = core[i].faultScore();
                 if (tempScore < score) {
+                    Vector3f eulers_old_primary, eulers_new_primary;
+                    float old_yaw_delta;
+
+                    // If core yaw reset data has been consumed reset delta to zero
+                    if (!yaw_reset_data.core_changed) {
+                        yaw_reset_data.core_delta = 0;
+                    }
+
+                    // If current primary has reset yaw after controller got it, add it to the delta
+                    // Prevent adding the delta if we have already changed primary in this filter update
+                    if (!changed && core[primary].getLastYawResetAngle(old_yaw_delta) > yaw_reset_data.last_function_call) {
+                        yaw_reset_data.core_delta += old_yaw_delta;
+                    }
+
+                    core[primary].getEulerAngles(eulers_old_primary);
+                    core[i].getEulerAngles(eulers_new_primary);
+
+                    // Record the yaw delta between current core and new primary core and the timestamp of the core change
+                    // Add current delta in case it hasn't been consumed yet
+                    yaw_reset_data.core_delta = wrap_PI(eulers_new_primary.z - eulers_old_primary.z + yaw_reset_data.core_delta);
+                    yaw_reset_data.last_primary_change = imuSampleTime_us / 1000;
+                    yaw_reset_data.core_changed = true;
+
+                    changed = true;
                     primary = i;
                     score = tempScore;
                 }
@@ -680,6 +713,16 @@ int8_t NavEKF2::getPrimaryCoreIndex(void) const
         return -1;
     }
     return primary;
+}
+
+// returns the index of the IMU of the primary core
+// return -1 if no primary core selected
+int8_t NavEKF2::getPrimaryCoreIMUIndex(void) const
+{
+    if (!core) {
+        return -1;
+    }
+    return core[primary].getIMUIndex();
 }
 
 // Write the last calculated NE position relative to the reference point (m).
@@ -1134,14 +1177,35 @@ bool NavEKF2::getHeightControlLimit(float &height) const
     return core[primary].getHeightControlLimit(height);
 }
 
-// return the amount of yaw angle change due to the last yaw angle reset in radians
+// return the amount of yaw angle change (in radians) due to the last yaw angle reset or core selection switch
 // returns the time of the last yaw angle reset or 0 if no reset has ever occurred
-uint32_t NavEKF2::getLastYawResetAngle(float &yawAng) const
+uint32_t NavEKF2::getLastYawResetAngle(float &yawAngDelta)
 {
     if (!core) {
         return 0;
     }
-    return core[primary].getLastYawResetAngle(yawAng);
+
+    // Record last time controller got the yaw reset
+    yaw_reset_data.last_function_call = imuSampleTime_us / 1000;
+    yawAngDelta = 0;
+    uint32_t lastYawReset_ms = 0;
+    float temp_yawAng;
+    uint32_t lastCoreYawReset_ms = core[primary].getLastYawResetAngle(temp_yawAng);
+
+    // If core has changed (and data not consumed yet) or if the core change was the last yaw reset, return its data
+    if (yaw_reset_data.core_changed || lastCoreYawReset_ms <= yaw_reset_data.last_primary_change) {
+        yawAngDelta = yaw_reset_data.core_delta;
+        lastYawReset_ms = yaw_reset_data.last_primary_change;
+        yaw_reset_data.core_changed = false;
+    }
+
+    // If current core yaw reset event was the last one, add it to the delta
+    if (lastCoreYawReset_ms > lastYawReset_ms) {
+        yawAngDelta = wrap_PI(yawAngDelta + temp_yawAng);
+        lastYawReset_ms = lastCoreYawReset_ms;
+    }
+
+    return lastYawReset_ms;
 }
 
 // return the amount of NE position change due to the last position reset in metres

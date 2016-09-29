@@ -449,6 +449,7 @@ bool QuadPlane::setup(void)
     motors->set_interlock(true);
     pid_accel_z.set_dt(loop_delta_t);
     pos_control->set_dt(loop_delta_t);
+    attitude_control->parameter_sanity_check();
 
     // setup the trim of any motors used by AP_Motors so px4io
     // failsafe will disable motors
@@ -461,7 +462,7 @@ bool QuadPlane::setup(void)
         }
     }
 
-#if CONFIG_HAL_BOARD == HAL_BOARD_PX4
+#if HAVE_PX4_MIXER
     // redo failsafe mixing on px4
     plane.setup_failsafe_mixing();
 #endif
@@ -758,6 +759,10 @@ void QuadPlane::control_loiter()
         float height_above_ground = plane.relative_ground_altitude(plane.g.rangefinder_landing);
         if (height_above_ground < land_final_alt && poscontrol.state < QPOS_LAND_FINAL) {
             poscontrol.state = QPOS_LAND_FINAL;
+            // cut IC engine if enabled
+            if (land_icengine_cut != 0) {
+                plane.g2.ice_control.engine_control(0, 0, 0);
+            }
         }
         float descent_rate = (poscontrol.state == QPOS_LAND_FINAL)? land_speed_cms:landing_descent_rate_cms(height_above_ground);
         pos_control->set_alt_target_from_climb_rate(-descent_rate, plane.G_Dt, true);
@@ -1005,7 +1010,7 @@ void QuadPlane::update_transition(void)
         }
         assisted_flight = true;
         hold_hover(assist_climb_rate_cms());
-        attitude_control->rate_controller_run();
+        run_rate_controller();
         motors_output();
         last_throttle = motors->get_throttle();
         break;
@@ -1026,7 +1031,7 @@ void QuadPlane::update_transition(void)
         }
         assisted_flight = true;
         hold_stabilize(throttle_scaled);
-        attitude_control->rate_controller_run();
+        run_rate_controller();
         motors_output();
         break;
     }
@@ -1038,6 +1043,15 @@ void QuadPlane::update_transition(void)
         }
         break;
     }
+}
+
+/*
+  run multicopter rate controller
+ */
+void QuadPlane::run_rate_controller(void)
+{
+    attitude_control->set_throttle_mix_max();
+    attitude_control->rate_controller_run();
 }
 
 /*
@@ -1066,7 +1080,7 @@ void QuadPlane::update(void)
         assisted_flight = false;
         
         // run low level rate controllers
-        attitude_control->rate_controller_run();
+        run_rate_controller();
 
         // output to motors
         motors_output();
@@ -1753,6 +1767,7 @@ bool QuadPlane::verify_vtol_takeoff(const AP_Mission::Mission_Command &cmd)
     }
     transition_state = TRANSITION_AIRSPEED_WAIT;
     plane.TECS_controller.set_pitch_max_limit(transition_pitch_max);
+    pos_control->set_alt_target(inertial_nav.get_altitude());
 
     plane.complete_auto_takeoff();
     
@@ -2013,4 +2028,12 @@ void QuadPlane::guided_update(void)
 {
     // run VTOL position controller
     vtol_position_controller();
+}
+
+void QuadPlane::afs_terminate(void)
+{
+    if (available()) {
+        motors->set_desired_spool_state(AP_Motors::DESIRED_SHUT_DOWN);
+        motors->output();
+    }
 }

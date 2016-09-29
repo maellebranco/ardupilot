@@ -34,6 +34,20 @@ board_branch() {
     esac
 }
 
+# add board specific options
+board_options() {
+    board="$1"
+    case $board in
+        bebop)
+            # bebop needs a static build
+            echo "--static"
+            ;;
+        *)
+            echo ""
+            ;;
+    esac
+}
+
 waf() {
     if [ -x ./waf ]; then
         ./waf "$@"
@@ -219,7 +233,7 @@ build_arduplane() {
         touch $binaries/Plane/$tag
     done
     popd
-    for b in erlebrain2 navio navio2 pxf pxfmini; do
+    for b in erlebrain2 navio navio2 pxf pxfmini disco; do
         checkout ArduPlane $tag $b "" || {
             echo "Failed checkout of ArduPlane $b $tag"
             error_count=$((error_count+1))
@@ -248,14 +262,16 @@ build_arduplane() {
         return
     }
     skip_build $tag $ddir || {
-        make px4-clean
-        make px4 -j2 || {
-            echo "Failed build of ArduPlane PX4 $tag"
-            error_count=$((error_count+1))
-            checkout ArduPlane "latest" "" ""
-            popd
-            return
-        }
+        for v in v1 v2 v4; do
+            make px4-clean
+            make px4-$v -j2 || {
+                echo "Failed build of ArduPlane PX4 $tag for $v"
+                error_count=$((error_count+1))
+                checkout ArduPlane "latest" "" ""
+                popd
+                return
+            }
+        done
         copyit ArduPlane-v1.px4 $ddir $tag &&
         copyit ArduPlane-v2.px4 $ddir $tag &&
         test ! -f ArduPlane-v4.px4 || copyit ArduPlane-v4.px4 $ddir $tag
@@ -287,7 +303,8 @@ build_arducopter() {
             ddir=$binaries/Copter/$hdate/$b-$f
             skip_build $tag $ddir && continue
             skip_frame $b $f && continue
-            waf configure --board $b --out $BUILDROOT clean \
+            options=$(board_options $b)
+            waf configure --board $b $options --out $BUILDROOT clean \
                     build --targets bin/arducopter-$f || {
                 echo "Failed build of ArduCopter $b-$f $tag"
                 error_count=$((error_count+1))
@@ -309,12 +326,14 @@ build_arducopter() {
         echo "Building ArduCopter PX4-$f binaries"
         ddir="$binaries/Copter/$hdate/PX4-$f"
         skip_build $tag $ddir && continue
-        make px4-clean
-        make px4-$f -j2 || {
-            echo "Failed build of ArduCopter PX4 $tag"
-            error_count=$((error_count+1))
-            continue
-        }
+        for v in v1 v2 v4; do
+            make px4-clean
+            make px4-$v-$f -j2 || {
+                echo "Failed build of ArduCopter PX4 $tag for $v"
+                error_count=$((error_count+1))
+                continue
+            }
+        done
         copyit ArduCopter-v1.px4 $ddir $tag &&
         copyit ArduCopter-v2.px4 $ddir $tag &&
         test ! -f ArduCopter-v4.px4 || copyit ArduCopter-v4.px4 $ddir $tag
@@ -368,14 +387,16 @@ build_rover() {
         return
     }
     skip_build $tag $ddir || {
-        make px4-clean
-        make px4 -j2 || {
-            echo "Failed build of APMrover2 PX4 $tag"
-            error_count=$((error_count+1))
-            checkout APMrover2 "latest" "" ""
-            popd
-            return
-        }
+        for v in v1 v2 v4; do
+            make px4-clean
+            make px4-$v -j2 || {
+                echo "Failed build of APMrover2 PX4 $tag"
+                error_count=$((error_count+1))
+                checkout APMrover2 "latest" "" ""
+                popd
+                return
+            }
+        done
         copyit APMrover2-v1.px4 $binaries/Rover/$hdate/PX4 $tag &&
         copyit APMrover2-v2.px4 $binaries/Rover/$hdate/PX4 $tag &&
         test ! -f APMrover2-v4.px4 || copyit APMrover2-v4.px4 $binaries/Rover/$hdate/PX4 $tag 
@@ -432,14 +453,16 @@ build_antennatracker() {
         return
     }
     skip_build $tag $ddir || {
-        make px4-clean
-        make px4 -j2 || {
-            echo "Failed build of AntennaTracker PX4 $tag"
-            error_count=$((error_count+1))
-            checkout AntennaTracker "latest" "" ""
-            popd
-            return
-        }
+        for v in v1 v2 v4; do
+            make px4-clean
+            make px4-$v -j2 || {
+                echo "Failed build of AntennaTracker PX4 $tag"
+                error_count=$((error_count+1))
+                checkout AntennaTracker "latest" "" ""
+                popd
+                return
+            }
+        done
         copyit AntennaTracker-v1.px4 $binaries/AntennaTracker/$hdate/PX4 $tag &&
         copyit AntennaTracker-v2.px4 $binaries/AntennaTracker/$hdate/PX4 $tag &&
         test ! -f AntennaTracker-v4.px4 || copyit AntennaTracker-v4.px4 $binaries/AntennaTracker/$hdate/PX4 $tag 

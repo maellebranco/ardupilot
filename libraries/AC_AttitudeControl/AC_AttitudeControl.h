@@ -143,6 +143,8 @@ public:
 
     // Return 321-intrinsic euler angles in centidegrees representing the rotation from NED earth frame to the
     // attitude controller's target attitude.
+    // **NOTE** Using vector3f*deg(100) is more efficient than deg(vector3f)*100 or deg(vector3d*100) because it gives the
+    // same result with the fewest multiplcations. Even though it may look like a bug, it is intentional. See issue 4895.
     Vector3f get_att_target_euler_cd() const { return _attitude_target_euler_angle*degrees(100.0f); }
 
     // Return the angle between the target thrust vector and the current thrust vector.
@@ -217,9 +219,6 @@ public:
     // Inverse proportional controller with piecewise sqrt sections to constrain second derivative
     static float stopping_point(float first_ord_mag, float p, float second_ord_lim);
 
-    // User settable parameters
-    static const struct AP_Param::GroupInfo var_info[];
-
     // calculates the velocity correction from an angle error. The angular velocity has acceleration and
     // deceleration limits including basic jerk limiting using smoothing_gain
     float input_shaping_angle(float error_angle, float smoothing_gain, float accel_max, float target_ang_vel);
@@ -237,6 +236,11 @@ public:
     // Calculates the body frame angular velocities to follow the target attitude
     void attitude_controller_run_quat();
 
+    // sanity check parameters.  should be called once before take-off
+    virtual void parameter_sanity_check() {}
+
+    // User settable parameters
+    static const struct AP_Param::GroupInfo var_info[];
 
 protected:
 

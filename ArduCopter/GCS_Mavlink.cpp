@@ -144,7 +144,7 @@ NOINLINE void Copter::send_extended_status1(mavlink_channel_t chan)
         control_sensors_present |= MAV_SYS_STATUS_LOGGING;
     }
 #if PROXIMITY_ENABLED == ENABLED
-    if (copter.proximity.get_status() > AP_Proximity::Proximity_NotConnected) {
+    if (copter.g2.proximity.get_status() > AP_Proximity::Proximity_NotConnected) {
         control_sensors_present |= MAV_SYS_STATUS_SENSOR_LASER_POSITION;
     }
 #endif
@@ -232,7 +232,7 @@ NOINLINE void Copter::send_extended_status1(mavlink_channel_t chan)
     }
 
 #if PROXIMITY_ENABLED == ENABLED
-    if (copter.proximity.get_status() < AP_Proximity::Proximity_Good) {
+    if (copter.g2.proximity.get_status() < AP_Proximity::Proximity_Good) {
         control_sensors_health &= ~MAV_SYS_STATUS_SENSOR_LASER_POSITION;
     }
 #endif
@@ -773,7 +773,7 @@ const AP_Param::GroupInfo GCS_MAVLINK::var_info[] = {
 
     // @Param: RC_CHAN
     // @DisplayName: RC Channel stream rate to ground station
-    // @Description: Stream rate of SERVO_OUTPUT_RAW and RC_CHANNELS_RAW to ground station
+    // @Description: Stream rate of SERVO_OUTPUT_RAW and RC_CHANNELS to ground station
     // @Units: Hz
     // @Range: 0 10
     // @Increment: 1

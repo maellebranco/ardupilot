@@ -197,10 +197,6 @@ private:
         LowPassFilterFloat alt_cm_filt; // altitude filter
     } rangefinder_state = { false, false, 0, 0 };
 
-#if PROXIMITY_ENABLED == ENABLED
-    AP_Proximity proximity {serial_manager};
-#endif
-
     AP_RPM rpm_sensor;
 
     // Inertial Navigation EKF
@@ -292,8 +288,6 @@ private:
         float alt_delta;
         uint32_t start_ms;
     } takeoff_state;
-
-    uint32_t precland_last_update_ms;
 
     // altitude below which we do no navigation in auto takeoff
     float auto_takeoff_no_nav_alt_cm;

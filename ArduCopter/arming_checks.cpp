@@ -1,5 +1,3 @@
-/// -*- tab-width: 4; Mode: C++; c-basic-offset: 4; indent-tabs-mode: nil -*-
-
 #include "Copter.h"
 
 // performs pre-arm checks. expects to be called at 1hz.
@@ -654,6 +652,14 @@ bool Copter::arm_checks(bool display_failure, bool arming_from_gcs)
     if (!ahrs.healthy()) {
         if (display_failure) {
             gcs_send_text(MAV_SEVERITY_CRITICAL,"Arm: Waiting for Nav Checks");
+        }
+        return false;
+    }
+
+    // check compass health
+    if (!compass.healthy()) {
+        if (display_failure) {
+            gcs_send_text(MAV_SEVERITY_CRITICAL,"Arm: Compass not healthy");
         }
         return false;
     }

@@ -1,4 +1,3 @@
-/// -*- tab-width: 4; Mode: C++; c-basic-offset: 4; indent-tabs-mode: nil -*-
 #pragma once
 
 #include "AP_Baro_Backend.h"
@@ -34,12 +33,6 @@ protected:
 
     AP_HAL::OwnPtr<AP_HAL::Device> _dev;
 
-    /*
-     * Synchronize access to _accum between thread sampling the HW and main
-     * thread using the values
-     */
-    AP_HAL::Semaphore *_sem;
-
     /* Shared values between thread sampling the HW and main thread */
     struct {
         uint32_t s_D1;
@@ -50,7 +43,6 @@ protected:
 
     uint8_t _state;
     uint8_t _instance;
-    uint32_t _last_cmd_usec;
 
     /* Last compensated values from accumulated sample */
     float _D1, _D2;

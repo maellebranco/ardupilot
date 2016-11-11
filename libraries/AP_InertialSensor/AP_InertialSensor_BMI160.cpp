@@ -131,6 +131,9 @@ AP_InertialSensor_Backend *
 AP_InertialSensor_BMI160::probe(AP_InertialSensor &imu,
                                 AP_HAL::OwnPtr<AP_HAL::SPIDevice> dev)
 {
+    if (!dev) {
+        return nullptr;
+    }
     auto sensor = new AP_InertialSensor_BMI160(imu, std::move(dev));
 
     if (!sensor) {
@@ -177,8 +180,8 @@ void AP_InertialSensor_BMI160::start()
 
     _dev->get_semaphore()->give();
 
-    _accel_instance = _imu.register_accel(BMI160_ODR_TO_HZ(BMI160_ODR));
-    _gyro_instance = _imu.register_gyro(BMI160_ODR_TO_HZ(BMI160_ODR));
+    _accel_instance = _imu.register_accel(BMI160_ODR_TO_HZ(BMI160_ODR), _dev->get_bus_id_devtype(DEVTYPE_BMI160));
+    _gyro_instance = _imu.register_gyro(BMI160_ODR_TO_HZ(BMI160_ODR),   _dev->get_bus_id_devtype(DEVTYPE_BMI160));
 
     /* Call _poll_data() at 1kHz */
     _dev->register_periodic_callback(1000,

@@ -13,7 +13,6 @@ def build(bld):
             'AP_Avoidance',
             'AP_Arming',
             'AP_Camera',
-            'AP_Frsky_Telem',
             'AP_L1_Control',
             'AP_Menu',
             'AP_Navigation',
@@ -30,7 +29,8 @@ def build(bld):
             'AC_PID',
             'AC_Fence',
             'AC_Avoidance',
-            'AP_Proximity'
+            'AP_Proximity',
+            'AP_Stats',
         ],
     )
 

@@ -1,4 +1,3 @@
-/// -*- tab-width: 4; Mode: C++; c-basic-offset: 4; indent-tabs-mode: nil -*-
 /*
  * Copyright (C) 2015  Intel Corporation. All rights reserved.
  *
@@ -52,6 +51,7 @@ void RCOutput_Sysfs::init()
         if (!_pwm_channels[i]) {
             AP_HAL::panic("RCOutput_Sysfs_PWM: Unable to setup PWM pin.");
         }
+        _pwm_channels[i]->init();
         _pwm_channels[i]->enable(false);
 
         /* Set the initial frequency */

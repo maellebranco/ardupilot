@@ -1,4 +1,3 @@
-/// -*- tab-width: 4; Mode: C++; c-basic-offset: 4; indent-tabs-mode: nil -*-
 #pragma once
 
 #include <AP_Common/AP_Common.h>
@@ -9,7 +8,6 @@
 
 #include "AP_Airspeed_Backend.h"
 #include "AP_Airspeed_I2C.h"
-#include "AP_Airspeed_PX4.h"
 #include "AP_Airspeed_analog.h"
 
 class Airspeed_Calibration {
@@ -181,9 +179,5 @@ private:
     void update_calibration(float raw_pressure);
 
     AP_Airspeed_Analog analog{_pin, _psi_range};
-#if CONFIG_HAL_BOARD == HAL_BOARD_PX4 || CONFIG_HAL_BOARD == HAL_BOARD_VRBRAIN
-    AP_Airspeed_PX4    digital{_psi_range};
-#else
     AP_Airspeed_I2C    digital{_psi_range};
-#endif
 };
